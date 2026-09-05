@@ -1,6 +1,6 @@
 # 基于深度学习的屏幕渲染异常检测
 
-本项目实现了一套完整的屏幕缺陷检测系统，涵盖从像素级语义分割到多类别快速分类的完整技术栈。
+本项目实现了一套完整的屏幕缺陷检测系统，涵盖从像素级语义分割到多类别快速分类的完整技术栈，专注于解决高动态渲染场景下异常检测的"难区分、高精度、低延时"三角矛盾。
 
 ---
 
@@ -8,93 +8,41 @@
 
 ### 问题与挑战
 
-在智能设备操作系统进行屏幕渲染管线压测时，渲染异常（如黑屏、花屏、闪烁等）不仅尺度多变、形态各异，而且暂留时间极短。传统检测方式主要依赖人工检查，不仅效率低下，而且难以满足大规模压测场景的需求。
+在智能设备屏幕渲染管线的压测过程中，渲染异常（如黑屏、花屏、闪烁等）呈现出独特的挑战性特征：尺度多变、形态各异、暂留时间极短。传统的人工检查方式效率低下，已无法满足大规模自动化压测的需求。
 
-**核心矛盾：**
-- **难以区分**：渲染异常特征与正常多变的 App UI 背景难以区分
-- **精度要求**：异常检测召回率需达到 >93%
-- **低延时要求**：单帧推理耗时需控制在十毫秒级别
+**核心矛盾（不可能三角）：**
 
-### 解决方案
+- **难区分**：渲染异常特征与正常多变的 App UI 背景在视觉表征上高度相似，传统视觉算法难以建立有效判别边界
+- **高精度**：作为质量保障环节，异常检测召回率需稳定维持在 >93% 的高水准
+- **低延时**：压测场景对单帧推理耗时提出严苛要求（十毫秒级），传统高精度模型难以兼顾速度
 
-本项目构建了一套端到端的智能渲染异常检测系统，采用自监督深度学习范式，结合知识蒸馏和轻量路由技术，成功解决了"难区分、高精度、低延时"的不可能三角问题。
+### 解决方案概览
 
-### 技术亮点
+本项目构建了一套端到端的智能渲染异常检测体系，采用自监督深度学习范式，结合知识蒸馏与轻量路由技术，在精度与速度之间取得工程化平衡。
 
-| 技术方案 | 解决的问题 | 效果 |
-|---------|-----------|------|
-| 自监督UNet元模型 | 正负样本比例悬殊、特征难以区分 | 重构为对比学习任务 |
-| 高速异常检查MoE Router | 推理算力开销大、时延要求高 | 单帧推理 <50ms |
-| 知识蒸馏 | 模型轻量化与精度的平衡 | 极限推理 <20ms |
+**核心技术亮点：**
 
----
-
-## 目录
-
-- [项目结构](#项目结构)
-- [核心网络架构](#核心网络架构)
-  - [UNet & UNetEncoder](#unet--unetencoder)
-  - [UnetDefeat (元任务模型)](#unetdefeat-元任务模型)
-  - [Gate (逻辑门网络)](#gate-逻辑门网络)
-  - [ClassifyNet (多分类网络)](#classifynet-多分类网络)
-  - [ResNet50 (蒸馏教师模型)](#resnet50-蒸馏教师模型)
-  - [LightRoutedNet (轻量路由网络)](#lightroutednet-轻量路由网络)
-- [损失函数](#损失函数)
-- [训练范式](#训练范式)
-  - [元任务训练 (Meta-Tasking)](#元任务训练-meta-tasking)
-  - [知识蒸馏 (Knowledge Distillation)](#知识蒸馏-knowledge-distillation)
-  - [强化学习监督微调 (PPO)](#强化学习监督微调-ppo)
-  - [轻量路由训练 (LightRoutedNet)](#轻量路由训练-lightroutednet)
-- [数据集生成](#数据集生成)
-- [数据集结构](#数据集结构)
-- [快速开始](#快速开始)
+| 技术方案 | 解决的问题 | 关键效果 |
+|---------|-----------|---------|
+| 自监督UNet元模型 | 正负样本比例悬殊、特征难以区分 | 重构为对比学习任务，学习上下文一致性 |
+| 高速异常检查MoE Router | 预训练模型算力开销过大 | 单类缺陷推断 <50ms，路由层极限 <20ms |
+| 知识蒸馏 | 模型轻量化与精度的平衡 | 召回率 >93%，大幅降低漏检率 |
 
 ---
 
-## 项目结构
+## 技术架构分层
 
-```
-ScreenAnomalyDetection/
-├── dataset/                          # 数据集目录
-│   ├── images/screen_images/          # 正常屏幕截图 (38 images)
-│   ├── masks/defeat_items{1-4}/       # 4类缺陷遮罩模板
-│   └── mixtures/                     # 混合缺陷样本图
-├── model/                            # 网络模型定义
-│   ├── UNet.py                       # UNet分割网络 + UNetEncoder编码器
-│   ├── DefeatNet.py                  # UnetDefeat + Gate + FocalLoss
-│   ├── ClassifyNet.py                # 多分类网络 (UNetEncoder + SPP)
-│   ├── ResNet.py                     # ResNet50 (知识蒸馏教师)
-│   └── LightRoutedNet.py             # 轻量级路由网络
-├── dataset_utils/                    # 数据集工具包
-│   ├── dataset_generator.py           # SplitDataset / MixtureSplitDataset
-│   ├── dataset_utils.py               # 图像增强与叠加工具
-│   ├── unified_dataset.py             # 统一数据集类
-│   └── rl_utils.py                   # 强化学习工具
-├── dataset_config.py                 # 统一路径配置
-├── DefeatMain.py                     # 主程序 (整屏推理入口)
-├── experiment_light_routed.py         # LightRoutedNet 实验脚本
-├── experiment_complete.py            # 完整对比实验脚本
-├── benchmark_light.py                 # 轻量模型基准测试
-├── migrate_dataset.py                # 数据集迁移工具
-├── net_unet_workbench.ipynb          # 元任务模型训练 Notebook
-├── net_distill_workbench.ipynb       # 知识蒸馏训练 Notebook
-├── net_classify_workbench.ipynb      # 多分类训练 Notebook
-├── ppo_classify_workbench.ipynb      # PPO 强化学习微调 Notebook
-├── net_light_routed_workbench.ipynb   # LightRoutedNet 训练 Notebook
-├── experiment_summary.ipynb           # 实验结果分析 Notebook
-├── requirements.txt                   # Python 依赖
-└── README.md                         # 本文档
-```
+本项目采用分层架构设计，从底层到顶层依次为：**特征提取层 → 任务模型层 → 知识压缩层 → 路由分发层**。每一层针对特定问题域进行优化，层与层之间通过特征接口解耦，既保证了模块复用性，也便于独立迭代优化。
 
 ---
 
 ## 核心网络架构
 
-### UNet & UNetEncoder
+### 特征提取骨干：UNet & UNetEncoder
 
-UNet 是本项目的核心骨干网络，采用经典的编码器-解码器（Encoder-Decoder）结构，包含 5 层卷积块。
+UNet 是整个系统的核心骨干网络，采用经典的编码器-解码器（Encoder-Decoder）结构，包含 5 层卷积块，承担像素级语义分割与深层特征提取的双重职责。
 
-**结构图示：**
+**编码器-解码器结构：**
 
 ```
 输入图像 (3×H×W)
@@ -151,7 +99,7 @@ UNet 是本项目的核心骨干网络，采用经典的编码器-解码器（En
 |------|------|
 | `LightConvBlock` | 两层 3×3 卷积 + BatchNorm + ReLU |
 | `LightUpConv` | 双线性上采样 2× + 3×3 卷积 + BatchNorm + ReLU |
-| `UNetEncoder` | 仅保留编码器部分，输出 512 通道特征图，供 Gate/ClassifyNet/LightRoutedNet 使用 |
+| `UNetEncoder` | 仅保留编码器部分，输出 512 通道特征图，供下游模块复用 |
 | `dfeature` 属性 | 前向传播时保存瓶颈层输出 (B,512,H/32,W/32) |
 
 **参数量估算：**
@@ -160,9 +108,11 @@ UNet 是本项目的核心骨干网络，采用经典的编码器-解码器（En
 
 ---
 
-### UnetDefeat (元任务模型)
+### 任务模型层
 
-`UnetDefeat` 是元任务训练模式下的完整模型，将 `UNet` 封装为一个可端到端训练的分割网络。
+#### UnetDefeat（元任务模型）
+
+`UnetDefeat` 是元任务训练模式下的完整模型，将 `UNet` 封装为可端到端训练的分割网络，同时承担双重输出：像素级掩码与深层语义特征。
 
 ```
 UnetDefeat.forward(defeat_image)
@@ -184,7 +134,7 @@ UNet(defeat_image) ──────┐
 
 ---
 
-### Gate (逻辑门网络)
+#### Gate（逻辑门网络）
 
 Gate 是元任务模型的第二部分，将 UNet 编码器输出的深层语义特征转换为二分类逻辑判断。
 
@@ -219,7 +169,7 @@ Linear(128→1) + Sigmoid ──→ 逻辑概率 p_hat (B,1)
 
 ---
 
-### ClassifyNet (多分类网络)
+#### ClassifyNet（多分类网络）
 
 ClassifyNet 是路由模式下的多分类网络，使用 UNetEncoder 作为特征提取器，并引入 SPP（Spatial Pyramid Pooling）多尺度池化来增强空间感知能力。
 
@@ -260,9 +210,9 @@ ClassifyNet 是路由模式下的多分类网络，使用 UNetEncoder 作为特�
 
 ---
 
-### ResNet50 (蒸馏教师模型)
+### 知识压缩层：ResNet50（蒸馏教师模型）
 
-ResNet50 是知识蒸馏中的"教师模型"，用于将元任务模型（UNet+Gate）的知识迁移到更轻量的 ResNet50 学生模型中。
+ResNet50 在本项目中承担双重角色：既是知识蒸馏的"教师模型"，也是独立可部署的高效推理备选方案。它通过严格的结构对齐策略，将元任务模型（UNet+Gate）的知识迁移到更轻量的网络结构中。
 
 ```
 输入图像 (3×H×W)
@@ -290,13 +240,13 @@ AdaptiveAvgPool2d((1,1)) → Flatten → Linear(2048→num_classes)
 
 **配置：** ResNet50 = [3, 4, 6, 3] 个 Bottleneck block
 
-**参数量：** ~23.5M 参数（教师）
+**参数量：** ~23.5M 参数
 
 ---
 
-### LightRoutedNet (轻量路由网络)
+### 路由分发层：LightRoutedNet（轻量路由网络）
 
-LightRoutedNet 是最新设计的轻量级路由网络，核心思想是**复用冻结的 UNet 编码器作为特征提取器，仅训练极轻量的分类/路由头**，实现极速推理。
+LightRoutedNet 是面向极低延时场景设计的轻量级路由网络，核心思想是**复用冻结的 UNet 编码器作为特征提取器，仅训练极轻量的分类/路由头**，实现极速推理与高精度召回的兼得。
 
 ```
 输入图像 ──→ UNetEncoder(冻结) ──→ (B,512,H/32,W/32)
@@ -316,6 +266,7 @@ LightRoutedNet 是最新设计的轻量级路由网络，核心思想是**复用
 ```
 
 **LightRouteHead (仅 ~0.05M 参数)：**
+
 ```
 (512,H/32,W/32)
     │
@@ -330,6 +281,7 @@ Linear(64→K) ──→ Sigmoid ──→ (B,K) 每类存在概率
 ```
 
 **LightClassifier (仅 ~0.1M 参数)：**
+
 ```
 (512,H/32,W/32)
     │
@@ -357,9 +309,9 @@ predictions = predictions / predictions.sum() # 归一化
 
 ---
 
-## 损失函数
+## 损失函数体系
 
-### Focal Loss
+### Focal Loss（像素级分割损失）
 
 用于 UnetDefeat 的像素级缺陷分割，解决正负样本严重不平衡的问题。
 
@@ -377,7 +329,7 @@ $$\mathcal{L}_{focal} = -\alpha \cdot (1 - p_t)^\gamma \cdot \log(p_t)$$
 | $\alpha$ | 0.25 | 正样本权重系数 |
 | $\gamma$ | 2.0 | 难易样本调节因子。$\gamma$ 越大，越关注困难样本 |
 
-**代码实现（`DefeatNet.py`）：**
+**核心实现：**
 
 ```python
 class FocalLoss(nn.Module):
@@ -398,13 +350,17 @@ class FocalLoss(nn.Module):
 
 **设计动机：** 屏幕图像中正常区域远多于缺陷区域。标准 BCE Loss 会被大量负样本主导，Focal Loss 通过 $(1-p_t)^\gamma$ 降低易分类样本的权重，让模型更关注难以分类的缺陷边界像素。
 
-### Cross Entropy Loss
+---
+
+### Cross Entropy Loss（分类损失）
 
 用于分类任务（Gate 二分类、ClassifyNet 多分类、LightRoutedNet 多分类）：
 
 $$\mathcal{L}_{CE} = -\sum_{i} y_i \cdot \log(\hat{y}_i)$$
 
 PyTorch 实现：`nn.CrossEntropyLoss()`（内部包含 LogSoftmax + NLLLoss）
+
+---
 
 ### KL Divergence（蒸馏损失）
 
@@ -414,7 +370,7 @@ $$\mathcal{L}_{KD} = T^2 \cdot \text{KL}\left( \text{Softmax}\left(\frac{z_s}{T}
 
 其中 $z_s$ 和 $z_t$ 分别是学生和教师的 logits，$T$ 是温度参数（默认 $T=3.0$）。
 
-**代码实现（`LightRoutedNet.py`）：**
+**核心实现：**
 
 ```python
 def distill_loss(self, student_logits, teacher_logits):
@@ -430,9 +386,9 @@ def distill_loss(self, student_logits, teacher_logits):
 
 ## 训练范式
 
-### 元任务训练 (Meta-Tasking)
+### 元任务训练（Meta-Tasking）
 
-元任务是本项目的核心训练范式，采用两阶段训练策略：**分割引导逻辑**。
+元任务是本项目的核心训练范式，采用两阶段训练策略：**分割引导逻辑**。该范式将复杂的异常检测任务解耦为"定位"与"判断"两个子问题，通过特征共享实现协同优化。
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -472,9 +428,9 @@ def distill_loss(self, student_logits, teacher_logits):
 
 ---
 
-### 知识蒸馏 (Knowledge Distillation)
+### 知识蒸馏（Knowledge Distillation）
 
-知识蒸馏将元任务模型（教师）的知识迁移到 ResNet50（学生），大幅提升推理速度。
+知识蒸馏将元任务模型（教师）的知识迁移到 ResNet50（学生），在保持精度的同时大幅提升推理速度。
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -505,7 +461,7 @@ def distill_loss(self, student_logits, teacher_logits):
 
 ---
 
-### 强化学习监督微调 (PPO)
+### 强化学习监督微调（PPO）
 
 使用 PPO（Proximal Policy Optimization）算法对 ClassifyNet 进行监督微调，使其能够利用元任务模型的反馈来改善多分类性能。
 
@@ -540,9 +496,9 @@ def distill_loss(self, student_logits, teacher_logits):
 
 ---
 
-### 轻量路由训练 (LightRoutedNet)
+### 轻量路由训练（LightRoutedNet）
 
-轻量路由训练仅微调路由头和分类头，冻结 UNet 编码器，大幅减少可训练参数。
+轻量路由训练仅微调路由头和分类头，冻结 UNet 编码器，大幅减少可训练参数，实现工程上的极速迭代。
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -571,11 +527,11 @@ def distill_loss(self, student_logits, teacher_logits):
 
 ---
 
-## 数据集生成
+## 数据集构建
 
 ### 样本合成原理
 
-数据通过**遮罩叠加**方式合成：
+训练数据通过**遮罩叠加**方式合成，这一设计解决了真实异常样本稀缺、采集成本高的问题：
 
 ```
 正常屏幕截图               缺陷遮罩 (白色背景)
@@ -591,7 +547,9 @@ def distill_loss(self, student_logits, teacher_logits):
 
 其中 `255 - mask` 是为了**反相**：遮罩中白色区域（缺陷）变为黑色，在叠加时保留原屏幕内容。
 
-### 数据增强
+---
+
+### 数据增强策略
 
 每次采样时对遮罩进行随机变换，增加样本多样性：
 
@@ -603,80 +561,33 @@ def distill_loss(self, student_logits, teacher_logits):
 | 旋转 180° | 半圈旋转 |
 | 不变换 | 保留原图 |
 
-### 数据集类型
-
-| 类 | 说明 |
-|----|------|
-| `SplitDataset` | 单类缺陷数据集（Normal + 1类缺陷），用于元任务训练 |
-| `MixtureSplitDataset` | 多类混合数据集（Normal + 4类缺陷），用于路由训练 |
-
 ---
 
-## 数据集结构
+### 数据集类型
 
-```
-dataset/
-├── images/
-│   └── screen_images/           # 正常屏幕截图 (38张, 统一尺寸)
-│       ├── Screenshot_xxx1.jpg
-│       ├── Screenshot_xxx2.jpg
-│       └── ...
-├── masks/
-│   ├── defeat_items1/           # 第1类缺陷遮罩 (4张)
-│   │   ├── defeat1.jpg          # 白色背景 + 缺陷图案
-│   │   ├── defeat2.jpg
-│   │   ├── defeat3.jpg
-│   │   └── defeat8.jpg
-│   ├── defeat_items2/           # 第2类缺陷遮罩 (4张)
-│   ├── defeat_items3/           # 第3类缺陷遮罩 (5张)
-│   └── defeat_items4/           # 第4类缺陷遮罩 (3张)
-│       ├── defeat9.jpg
-│       ├── defeat10.jpg
-│       └── defeat13.jpg
-└── mixtures/                    # 预混合缺陷样本图
-    ├── mixture1.png
-    └── ...
-```
-
-**路径配置统一由 `dataset_config.py` 管理：**
-
-```python
-from dataset_config import (
-    SCREEN_IMAGES_DIR,   # dataset/images/screen_images
-    MASK_CLASSES,        # {1: defeat_items1, 2: defeat_items2, ...}
-    MIXTURES_DIR,        # dataset/mixtures
-    get_all_mask_dirs,   # 获取所有遮罩目录
-    get_mask_dirs_for_classes  # 获取指定类别的遮罩目录
-)
-```
+| 数据集类型 | 用途 | 组成 |
+|-----------|------|------|
+| 单类缺陷数据集 | 元任务训练 | Normal + 1类缺陷 |
+| 多类混合数据集 | 路由训练 | Normal + 4类缺陷 |
 
 ---
 
 ## 快速开始
 
-### 1. 环境安装
+### 环境安装
 
 ```bash
-# 克隆仓库
-git clone https://gitee.com/g00db0y2025/ScreenAnomalyDetection.git
-cd ScreenAnomalyDetection
-git checkout develop
-
-# 安装依赖
 pip install -r requirements.txt
 ```
 
-### 2. 训练元任务模型
+### 训练元任务模型
 
 ```bash
-# 打开 Notebook
-jupyter notebook net_unet_workbench.ipynb
-
 # 或直接运行主程序
 python DefeatMain.py
 ```
 
-### 3. 训练 LightRoutedNet（推荐，更快）
+### 训练轻量路由模型（推荐，更快）
 
 ```bash
 python experiment_light_routed.py
